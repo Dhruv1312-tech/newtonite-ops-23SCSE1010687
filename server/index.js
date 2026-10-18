@@ -795,6 +795,36 @@ app.get("/api/teams/:teamId/work-items", authenticate, async (req, res) => {
 
 
 
+const WORKFLOW_TRANSITIONS = {
+  OPEN: ["IN_PROGRESS"],
+  IN_PROGRESS: ["AWAITING_APPROVAL"],
+  AWAITING_APPROVAL: ["RESOLVED", "IN_PROGRESS"],
+  RESOLVED: ["CLOSED", "IN_PROGRESS"],
+  CLOSED: []
+};
+
+function validateWorkflowTransition(currentStatus, nextStatus, role) {
+  if (currentStatus === nextStatus) {
+    return null;
+  }
+
+  const allowed = WORKFLOW_TRANSITIONS[currentStatus] || [];
+
+  if (!allowed.includes(nextStatus)) {
+    return `Invalid workflow transition: ${currentStatus} to ${nextStatus}`;
+  }
+
+  if (
+    ["RESOLVED", "CLOSED"].includes(nextStatus) &&
+    !["LEAD", "ADMIN"].includes(role)
+  ) {
+    return "Only a team Lead or Admin can approve or close work items";
+  }
+
+  return null;
+}
+
+
 app.patch("/api/work-items/:id", authenticate, async (req, res) => {
   try {
     const { id } = req.params;
@@ -880,6 +910,23 @@ app.patch("/api/work-items/:id", authenticate, async (req, res) => {
         });
       }
     }
+
+    
+if (status !== undefined) {
+  const workflowError = validateWorkflowTransition(
+    existing.status,
+    status,
+    membership.role
+  );
+
+  if (workflowError) {
+    return res.status(400).json({
+      success: false,
+      message: workflowError
+    });
+  }
+}
+
 
     const changes = {};
 
@@ -1135,7 +1182,14 @@ app.get("/api/work-items/:id/activity", authenticate, async (req, res) => {
 
 
 
+if (require.main === module) {
+  app.listen(PORT, () => {
+    console.log(`OPSPULSE server running on port ${PORT}`);
+  });
+}
 
-app.listen(PORT, () => {
-  console.log(`OPSPULSE server running on port ${PORT}`);
-});
+module.exports = { app, prisma };
+
+
+
+

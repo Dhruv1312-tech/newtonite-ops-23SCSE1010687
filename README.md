@@ -96,6 +96,47 @@ npm run build
 - Work item updates use version checks to prevent stale overwrites.
 - The application currently uses local development URLs.
 
+
+## Workflow Rules
+
+OPSPULSE enforces work item status transitions on the backend:
+
+OPEN → IN_PROGRESS → AWAITING_APPROVAL → RESOLVED → CLOSED
+
+- Invalid status transitions are rejected.
+- Work items awaiting approval can be returned to IN_PROGRESS.
+- Only team LEAD and ADMIN roles can approve or close work items.
+- Stale updates are rejected with HTTP 409 Conflict.
+
+## Automated Tests
+
+The backend includes automated tests for three important correctness behaviours:
+
+1. Rejecting invalid workflow transitions.
+2. Preventing MEMBER users from approving work items.
+3. Rejecting stale-version updates with HTTP 409 Conflict.
+
+Run the tests from the server directory:
+
+```bash
+cd server
+node --test workflow.test.js
+```
+
+The current tests use development database records, including test users and work items.
+
+## Engineering Decisions
+
+See [ENGINEERING_DECISIONS.md](ENGINEERING_DECISIONS.md) for architecture decisions, authorization rules, concurrency handling, workflow enforcement, trade-offs, and limitations.
+
+## Known Limitations
+
+- Work item listing does not yet support server-side search or pagination.
+- Workflow rules are fixed rather than configurable.
+- Idempotency keys are not implemented.
+- Automated tests do not cover every API endpoint.
+- The application is configured for local development and has not been production deployed.
+
 ## Repository
 
 https://github.com/Dhruv1312-tech/newtonite-ops-23SCSE1010687
