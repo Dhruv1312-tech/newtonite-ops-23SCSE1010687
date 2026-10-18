@@ -1,0 +1,122 @@
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  VIEWER
+  MEMBER
+  LEAD
+  ADMIN
+}
+
+enum WorkType {
+  TASK
+  INCIDENT
+}
+
+enum Priority {
+  LOW
+  MEDIUM
+  HIGH
+  CRITICAL
+}
+
+enum WorkStatus {
+  OPEN
+  IN_PROGRESS
+  AWAITING_APPROVAL
+  RESOLVED
+  CLOSED
+}
+
+model User {
+  id          String       @id @default(uuid())
+  name        String
+  email       String       @unique
+  password    String
+  memberships Membership[]
+  createdItems WorkItem[]   @relation("CreatedItems")
+  assignedItems WorkItem[]  @relation("AssignedItems")
+  comments    Comment[]
+  activities  ActivityEvent[]
+  createdAt   DateTime     @default(now())
+}
+
+model Team {
+  id          String       @id @default(uuid())
+  name        String       @unique
+  memberships Membership[]
+  workItems   WorkItem[]
+}
+
+model Membership {
+  id     String @id @default(uuid())
+  userId String
+  teamId String
+  role   Role   @default(MEMBER)
+
+  user User @relation(fields: [userId], references: [id])
+  team Team @relation(fields: [teamId], references: [id])
+
+  @@unique([userId, teamId])
+}
+
+model WorkItem {
+  id          String     @id @default(uuid())
+  title       String
+  description String
+  type        WorkType
+  priority    Priority   @default(MEDIUM)
+  status      WorkStatus @default(OPEN)
+  version     Int        @default(1)
+
+  teamId      String
+  createdById String
+  assigneeId  String?
+
+  team      Team  @relation(fields: [teamId], references: [id])
+  createdBy User  @relation("CreatedItems", fields: [createdById], references: [id])
+  assignee  User? @relation("AssignedItems", fields: [assigneeId], references: [id])
+
+  comments   Comment[]
+  activities ActivityEvent[]
+
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  dueDate   DateTime?
+
+  @@index([teamId, status])
+  @@index([assigneeId, status])
+  @@index([priority, createdAt])
+}
+
+model Comment {
+  id         String   @id @default(uuid())
+  content    String
+  workItemId String
+  userId     String
+  createdAt  DateTime @default(now())
+
+  workItem WorkItem @relation(fields: [workItemId], references: [id])
+  user     User     @relation(fields: [userId], references: [id])
+}
+
+model ActivityEvent {
+  id         String   @id @default(uuid())
+  action     String
+  details    Json?
+  workItemId String
+  userId     String
+  createdAt  DateTime @default(now())
+
+  workItem WorkItem @relation(fields: [workItemId], references: [id])
+  user     User     @relation(fields: [userId], references: [id])
+
+  @@index([workItemId, createdAt])
+}
