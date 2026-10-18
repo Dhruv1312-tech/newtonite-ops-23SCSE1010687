@@ -608,6 +608,532 @@ app.get("/api/auth/me", authenticate, async (req, res) => {
 
 
 
+app.post("/api/work-items", authenticate, async (req, res) => {
+  try {
+    const {
+      title,
+      description,
+      type,
+      priority,
+      teamId,
+      assigneeId,
+      dueDate
+    } = req.body || {};
+
+    if (
+      typeof title !== "string" ||
+      !title.trim() ||
+      typeof description !== "string" ||
+      !description.trim() ||
+      !["TASK", "INCIDENT"].includes(type) ||
+      !["LOW", "MEDIUM", "HIGH", "CRITICAL"].includes(priority) ||
+      typeof teamId !== "string" ||
+      !teamId.trim()
+    ) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid work item details"
+      });
+    }
+
+    if (
+      assigneeId != null &&
+      (typeof assigneeId !== "string" || !assigneeId.trim())
+    ) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid assignee"
+      });
+    }
+
+    let parsedDueDate = null;
+
+    if (dueDate != null) {
+      parsedDueDate = new Date(dueDate);
+
+      if (
+        typeof dueDate !== "string" ||
+        !dueDate.trim() ||
+        Number.isNaN(parsedDueDate.getTime())
+      ) {
+        return res.status(400).json({
+          success: false,
+          message: "Invalid due date"
+        });
+      }
+    }
+
+    const membership = await prisma.membership.findUnique({
+      where: {
+        userId_teamId: {
+          userId: req.userId,
+          teamId
+        }
+      }
+    });
+
+    if (
+      !membership ||
+      !["MEMBER", "LEAD", "ADMIN"].includes(membership.role)
+    ) {
+      return res.status(403).json({
+        success: false,
+        message: "You cannot create work items in this team"
+      });
+    }
+
+    if (assigneeId) {
+      const assigneeMembership = await prisma.membership.findUnique({
+        where: {
+          userId_teamId: {
+            userId: assigneeId,
+            teamId
+          }
+        }
+      });
+
+      if (!assigneeMembership) {
+        return res.status(400).json({
+          success: false,
+          message: "Assignee must belong to the same team"
+        });
+      }
+    }
+
+    const workItem = await prisma.$transaction(async (tx) => {
+      const created = await tx.workItem.create({
+        data: {
+          title: title.trim(),
+          description: description.trim(),
+          type,
+          priority,
+          teamId,
+          createdById: req.userId,
+          assigneeId: assigneeId || null,
+          dueDate: parsedDueDate
+        }
+      });
+
+      await tx.activityEvent.create({
+        data: {
+          action: "CREATED",
+          workItemId: created.id,
+          userId: req.userId,
+          details: {
+            title: created.title,
+            status: created.status
+          }
+        }
+      });
+
+      return created;
+    });
+
+    return res.status(201).json({
+      success: true,
+      message: "Work item created successfully",
+      workItem
+    });
+  } catch (error) {
+    console.error("Create work item error:", error);
+
+    return res.status(500).json({
+      success: false,
+      message: "Failed to create work item"
+    });
+  }
+});
+
+
+app.get("/api/teams/:teamId/work-items", authenticate, async (req, res) => {
+  try {
+    const { teamId } = req.params;
+
+    const membership = await prisma.membership.findUnique({
+      where: {
+        userId_teamId: {
+          userId: req.userId,
+          teamId
+        }
+      }
+    });
+
+    if (!membership) {
+      return res.status(403).json({
+        success: false,
+        message: "You are not a member of this team"
+      });
+    }
+
+    const workItems = await prisma.workItem.findMany({
+      where: { teamId },
+      include: {
+        createdBy: {
+          select: { id: true, name: true, email: true }
+        },
+        assignee: {
+          select: { id: true, name: true, email: true }
+        }
+      },
+      orderBy: { createdAt: "desc" }
+    });
+
+    return res.status(200).json({
+      success: true,
+      count: workItems.length,
+      workItems
+    });
+  } catch (error) {
+    console.error("List work items error:", error);
+
+    return res.status(500).json({
+      success: false,
+      message: "Failed to fetch work items"
+    });
+  }
+});
+
+
+
+app.patch("/api/work-items/:id", authenticate, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { status, priority, assigneeId, version } = req.body || {};
+
+    if (!Number.isInteger(version) || version < 1) {
+      return res.status(400).json({
+        success: false,
+        message: "Valid version is required"
+      });
+    }
+
+    if (
+      status === undefined &&
+      priority === undefined &&
+      assigneeId === undefined
+    ) {
+      return res.status(400).json({
+        success: false,
+        message: "Provide at least one field to update"
+      });
+    }
+
+    if (
+      (status !== undefined &&
+        !["OPEN", "IN_PROGRESS", "AWAITING_APPROVAL", "RESOLVED", "CLOSED"].includes(status)) ||
+      (priority !== undefined &&
+        !["LOW", "MEDIUM", "HIGH", "CRITICAL"].includes(priority)) ||
+      (assigneeId !== undefined &&
+        assigneeId !== null &&
+        (typeof assigneeId !== "string" || !assigneeId.trim()))
+    ) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid update values"
+      });
+    }
+
+    const existing = await prisma.workItem.findUnique({
+      where: { id }
+    });
+
+    if (!existing) {
+      return res.status(404).json({
+        success: false,
+        message: "Work item not found"
+      });
+    }
+
+    const membership = await prisma.membership.findUnique({
+      where: {
+        userId_teamId: {
+          userId: req.userId,
+          teamId: existing.teamId
+        }
+      }
+    });
+
+    if (
+      !membership ||
+      !["MEMBER", "LEAD", "ADMIN"].includes(membership.role)
+    ) {
+      return res.status(403).json({
+        success: false,
+        message: "You cannot update this work item"
+      });
+    }
+
+    if (assigneeId) {
+      const assigneeMembership = await prisma.membership.findUnique({
+        where: {
+          userId_teamId: {
+            userId: assigneeId,
+            teamId: existing.teamId
+          }
+        }
+      });
+
+      if (!assigneeMembership) {
+        return res.status(400).json({
+          success: false,
+          message: "Assignee must belong to the same team"
+        });
+      }
+    }
+
+    const changes = {};
+
+    if (status !== undefined) changes.status = status;
+    if (priority !== undefined) changes.priority = priority;
+    if (assigneeId !== undefined) changes.assigneeId = assigneeId;
+
+    const result = await prisma.$transaction(async (tx) => {
+      const updated = await tx.workItem.updateMany({
+        where: { id, version },
+        data: {
+          ...changes,
+          version: { increment: 1 }
+        }
+      });
+
+      if (updated.count === 0) return null;
+
+      const workItem = await tx.workItem.findUnique({
+        where: { id }
+      });
+
+      await tx.activityEvent.create({
+        data: {
+          action: "UPDATED",
+          workItemId: id,
+          userId: req.userId,
+          details: {
+            previousVersion: version,
+            changes
+          }
+        }
+      });
+
+      return workItem;
+    });
+
+    if (!result) {
+      return res.status(409).json({
+        success: false,
+        message: "Work item was modified by another request. Refresh and try again."
+      });
+    }
+
+    return res.json({
+      success: true,
+      message: "Work item updated successfully",
+      workItem: result
+    });
+  } catch (error) {
+    console.error("Update work item error:", error);
+
+    return res.status(500).json({
+      success: false,
+      message: "Failed to update work item"
+    });
+  }
+});
+
+
+
+app.post("/api/work-items/:id/comments", authenticate, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { content } = req.body || {};
+
+    if (typeof content !== "string" || !content.trim()) {
+      return res.status(400).json({
+        success: false,
+        message: "Comment cannot be empty"
+      });
+    }
+
+    const workItem = await prisma.workItem.findUnique({
+      where: { id }
+    });
+
+    if (!workItem) {
+      return res.status(404).json({
+        success: false,
+        message: "Work item not found"
+      });
+    }
+
+    const membership = await prisma.membership.findUnique({
+      where: {
+        userId_teamId: {
+          userId: req.userId,
+          teamId: workItem.teamId
+        }
+      }
+    });
+
+    if (
+      !membership ||
+      !["MEMBER", "LEAD", "ADMIN"].includes(membership.role)
+    ) {
+      return res.status(403).json({
+        success: false,
+        message: "You cannot comment on this work item"
+      });
+    }
+
+    const comment = await prisma.$transaction(async (tx) => {
+      const created = await tx.comment.create({
+        data: {
+          content: content.trim(),
+          workItemId: id,
+          userId: req.userId
+        },
+        include: {
+          user: {
+            select: { id: true, name: true }
+          }
+        }
+      });
+
+      await tx.activityEvent.create({
+        data: {
+          action: "COMMENT_ADDED",
+          workItemId: id,
+          userId: req.userId,
+          details: {
+            commentId: created.id
+          }
+        }
+      });
+
+      return created;
+    });
+
+    return res.status(201).json({
+      success: true,
+      comment
+    });
+  } catch (error) {
+    console.error("Add comment error:", error);
+
+    return res.status(500).json({
+      success: false,
+      message: "Failed to add comment"
+    });
+  }
+});
+
+
+
+app.get("/api/work-items/:id/comments", authenticate, async (req, res) => {
+  try {
+    const workItem = await prisma.workItem.findUnique({
+      where: { id: req.params.id },
+      select: { id: true, teamId: true }
+    });
+
+    if (!workItem) {
+      return res.status(404).json({
+        success: false,
+        message: "Work item not found"
+      });
+    }
+
+    const membership = await prisma.membership.findUnique({
+      where: {
+        userId_teamId: {
+          userId: req.userId,
+          teamId: workItem.teamId
+        }
+      }
+    });
+
+    if (!membership) {
+      return res.status(403).json({
+        success: false,
+        message: "You cannot view these comments"
+      });
+    }
+
+    const comments = await prisma.comment.findMany({
+      where: { workItemId: workItem.id },
+      include: {
+        user: {
+          select: { id: true, name: true }
+        }
+      },
+      orderBy: { createdAt: "asc" }
+    });
+
+    return res.json({
+      success: true,
+      comments
+    });
+  } catch (error) {
+    console.error("Fetch comments error:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Failed to fetch comments"
+    });
+  }
+});
+
+app.get("/api/work-items/:id/activity", authenticate, async (req, res) => {
+  try {
+    const workItem = await prisma.workItem.findUnique({
+      where: { id: req.params.id },
+      select: { id: true, teamId: true }
+    });
+
+    if (!workItem) {
+      return res.status(404).json({
+        success: false,
+        message: "Work item not found"
+      });
+    }
+
+    const membership = await prisma.membership.findUnique({
+      where: {
+        userId_teamId: {
+          userId: req.userId,
+          teamId: workItem.teamId
+        }
+      }
+    });
+
+    if (!membership) {
+      return res.status(403).json({
+        success: false,
+        message: "You cannot view this activity history"
+      });
+    }
+
+    const activities = await prisma.activityEvent.findMany({
+      where: { workItemId: workItem.id },
+      include: {
+        user: {
+          select: { id: true, name: true }
+        }
+      },
+      orderBy: { createdAt: "desc" }
+    });
+
+    return res.json({
+      success: true,
+      activities
+    });
+  } catch (error) {
+    console.error("Fetch activity error:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Failed to fetch activity history"
+    });
+  }
+});
+
+
 
 
 app.listen(PORT, () => {
