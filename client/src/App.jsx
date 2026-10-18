@@ -33,6 +33,22 @@ async function apiRequest(path, token, options = {}) {
   return data;
 }
 
+
+function buildWorkItemsUrl(teamId, search, status, priority, type, page) {
+  const params = new URLSearchParams({
+    page: String(page),
+    limit: "10"
+  });
+
+  if (search.trim()) params.set("search", search.trim());
+  if (status) params.set("status", status);
+  if (priority) params.set("priority", priority);
+  if (type) params.set("type", type);
+
+  return `/teams/${teamId}/work-items?${params.toString()}`;
+}
+
+
 function App() {
   const [token, setToken] = useState(
     () => sessionStorage.getItem("opspulse_token") || ""
@@ -45,6 +61,15 @@ function App() {
   const [teams, setTeams] = useState([]);
   const [teamId, setTeamId] = useState("");
   const [items, setItems] = useState([]);
+  
+  const [search, setSearch] = useState("");
+  const [statusFilter, setStatusFilter] = useState("");
+  const [priorityFilter, setPriorityFilter] = useState("");
+  const [typeFilter, setTypeFilter] = useState("");
+  const [page, setPage] = useState(1);
+  const [totalItems, setTotalItems] = useState(0);
+  const [totalPages, setTotalPages] = useState(1);
+
   const [members, setMembers] = useState([]);
   const [selectedItem, setSelectedItem] = useState(null);
   const [comments, setComments] = useState([]);
@@ -126,12 +151,24 @@ function App() {
 
     async function loadItems() {
       try {
-        const data = await apiRequest(
-          `/teams/${teamId}/work-items`,
-          token
-        );
+        
+const data = await apiRequest(
+  buildWorkItemsUrl(
+    teamId,
+    search,
+    statusFilter,
+    priorityFilter,
+    typeFilter,
+    page
+  ),
+  token
+);
+
+        
         if (!cancelled) {
           setItems(data.workItems || []);
+          setTotalItems(data.total ?? 0);
+          setTotalPages(data.totalPages || 1);
           setError("");
         }
       } catch (err) {
@@ -145,7 +182,9 @@ function App() {
     return () => {
       cancelled = true;
     };
-  }, [token, teamId]);
+  
+  }, [token, teamId, search, statusFilter, priorityFilter, typeFilter, page]);
+
 
 
   
@@ -212,15 +251,30 @@ useEffect(() => {
     }
   }
 
+
+  
   async function refreshItems() {
     if (!teamId) return;
-
+    
     const data = await apiRequest(
-      `/teams/${teamId}/work-items`,
-      token
-    );
-    setItems(data.workItems || []);
-  }
+      buildWorkItemsUrl(
+      teamId,
+      search,
+      statusFilter,
+      priorityFilter,
+      typeFilter,
+      page
+    ),
+    token
+  );
+
+  setItems(data.workItems || []);
+  setTotalItems(data.total ?? 0);
+  setTotalPages(data.totalPages || 1);
+}
+
+
+   
 
   async function createItem(event) {
     event.preventDefault();
@@ -507,6 +561,74 @@ if (!token) {
                   </button>
                 </div>
 
+                
+<div
+  style={{
+    display: "flex",
+    flexWrap: "wrap",
+    gap: "10px",
+    marginBottom: "16px"
+  }}
+>
+  <input
+    type="search"
+    placeholder="Search work items..."
+    aria-label="Search work items"
+    value={search}
+    onChange={(event) => {
+      setSearch(event.target.value);
+      setPage(1);
+    }}
+    style={{ flex: "1 1 200px", minWidth: "160px" }}
+  />
+
+  <select
+    aria-label="Filter by status"
+    value={statusFilter}
+    onChange={(event) => {
+      setStatusFilter(event.target.value);
+      setPage(1);
+    }}
+  >
+    <option value="">All statuses</option>
+    {statuses.map((status) => (
+      <option key={status} value={status}>
+        {status.replaceAll("_", " ")}
+      </option>
+    ))}
+  </select>
+
+  <select
+    aria-label="Filter by priority"
+    value={priorityFilter}
+    onChange={(event) => {
+      setPriorityFilter(event.target.value);
+      setPage(1);
+    }}
+  >
+    <option value="">All priorities</option>
+    {priorities.map((priority) => (
+      <option key={priority} value={priority}>
+        {priority}
+      </option>
+    ))}
+  </select>
+
+  <select
+    aria-label="Filter by type"
+    value={typeFilter}
+    onChange={(event) => {
+      setTypeFilter(event.target.value);
+      setPage(1);
+    }}
+  >
+    <option value="">All types</option>
+    <option value="TASK">Task</option>
+    <option value="INCIDENT">Incident</option>
+  </select>
+</div>
+
+
                 <div className="table-wrapper">
                   <table className="work-table">
                     <thead>
@@ -603,6 +725,47 @@ onClick={() => openItem(item)}
                     </tbody>
                   </table>
                 </div>
+
+                
+<div
+  style={{
+    display: "flex",
+    justifyContent: "space-between",
+    alignItems: "center",
+    gap: "12px",
+    flexWrap: "wrap",
+    marginTop: "16px"
+  }}
+>
+  <span>
+    Showing {items.length} of {totalItems} matching work items
+  </span>
+
+  <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+    <button
+      type="button"
+      className="secondary-button"
+      disabled={page <= 1}
+      onClick={() => setPage((current) => Math.max(1, current - 1))}
+    >
+      Previous
+    </button>
+
+    <span>
+      Page {page} of {totalPages}
+    </span>
+
+    <button
+      type="button"
+      className="secondary-button"
+      disabled={page >= totalPages}
+      onClick={() => setPage((current) => current + 1)}
+    >
+      Next
+    </button>
+  </div>
+</div>
+
               </section>
 
               <section className="panel create-panel">

@@ -745,9 +745,11 @@ app.post("/api/work-items", authenticate, async (req, res) => {
 });
 
 
+
 app.get("/api/teams/:teamId/work-items", authenticate, async (req, res) => {
   try {
     const { teamId } = req.params;
+    const { search, status, priority, type, page, limit } = req.query;
 
     const membership = await prisma.membership.findUnique({
       where: {
@@ -765,22 +767,89 @@ app.get("/api/teams/:teamId/work-items", authenticate, async (req, res) => {
       });
     }
 
-    const workItems = await prisma.workItem.findMany({
-      where: { teamId },
-      include: {
-        createdBy: {
-          select: { id: true, name: true, email: true }
+    const validStatuses = [
+      "OPEN",
+      "IN_PROGRESS",
+      "AWAITING_APPROVAL",
+      "RESOLVED",
+      "CLOSED"
+    ];
+
+    const validPriorities = ["LOW", "MEDIUM", "HIGH", "CRITICAL"];
+    const validTypes = ["TASK", "INCIDENT"];
+
+    if (
+      (status !== undefined && !validStatuses.includes(status)) ||
+      (priority !== undefined && !validPriorities.includes(priority)) ||
+      (type !== undefined && !validTypes.includes(type)) ||
+      (search !== undefined && typeof search !== "string")
+    ) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid search or filter parameters"
+      });
+    }
+
+    const pageNumber = page === undefined ? 1 : Number(page);
+    const pageSize = limit === undefined ? 20 : Number(limit);
+
+    if (
+      !Number.isSafeInteger(pageNumber) ||
+      pageNumber < 1 ||
+      !Number.isSafeInteger(pageSize) ||
+      pageSize < 1 ||
+      pageSize > 100 ||
+      !Number.isSafeInteger((pageNumber - 1) * pageSize)
+    ) {
+      return res.status(400).json({
+        success: false,
+        message: "Page must be positive and limit must be between 1 and 100"
+      });
+    }
+
+    const where = { teamId };
+
+    if (status) where.status = status;
+    if (priority) where.priority = priority;
+    if (type) where.type = type;
+
+    if (search && search.trim()) {
+      const query = search.trim();
+
+      where.OR = [
+        { title: { contains: query, mode: "insensitive" } },
+        { description: { contains: query, mode: "insensitive" } }
+      ];
+    }
+
+    const [total, workItems] = await prisma.$transaction([
+      prisma.workItem.count({ where }),
+      prisma.workItem.findMany({
+        where,
+        include: {
+          createdBy: {
+            select: { id: true, name: true, email: true }
+          },
+          assignee: {
+            select: { id: true, name: true, email: true }
+          }
         },
-        assignee: {
-          select: { id: true, name: true, email: true }
-        }
-      },
-      orderBy: { createdAt: "desc" }
-    });
+        orderBy: [
+          { createdAt: "desc" },
+          { id: "desc" }
+        ],
+        skip: (pageNumber - 1) * pageSize,
+        take: pageSize
+      })
+    ]);
 
     return res.status(200).json({
       success: true,
       count: workItems.length,
+      total,
+      page: pageNumber,
+      limit: pageSize,
+      totalPages: Math.ceil(total / pageSize),
       workItems
     });
   } catch (error) {
