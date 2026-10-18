@@ -23,6 +23,12 @@ A team operations management application for tracking tasks, incidents, assignme
 - Comments on work items
 - Activity history
 - Optimistic concurrency control using version numbers
+- Server-side work item search by title and description
+- Work item filtering by status, priority, and type
+- Server-side pagination with configurable page size
+- Combined search and filtering for team work items
+- Input validation for pagination and filter parameters
+
 
 ## Project Structure
 
@@ -97,6 +103,40 @@ npm run build
 - The application currently uses local development URLs.
 
 
+
+
+## Search, Filtering and Pagination
+
+OPSPULSE supports server-side search, filtering, and pagination for team work items.
+
+### Search
+Users can search work items by title or description. Search is case-insensitive.
+
+### Filters
+Work items can be filtered by:
+- Status: OPEN, IN_PROGRESS, AWAITING_APPROVAL, RESOLVED, CLOSED
+- Priority: LOW, MEDIUM, HIGH, CRITICAL
+- Type: TASK or INCIDENT
+
+Search and filters can be combined in a single request.
+
+### Pagination
+The backend supports page-based pagination with a configurable page size.
+
+- Default API page size: 20 items
+- Maximum API page size: 100 items
+- Dashboard page size: 10 items
+- API responses include total, page, limit, and totalPages
+
+Example API request:
+
+```text
+GET /api/teams/:teamId/work-items?search=dashboard&status=OPEN&page=1&limit=10
+```
+
+Team membership is checked before work items are returned.
+
+
 ## Workflow Rules
 
 OPSPULSE enforces work item status transitions on the backend:
@@ -131,7 +171,7 @@ See [ENGINEERING_DECISIONS.md](ENGINEERING_DECISIONS.md) for architecture decisi
 
 ## Known Limitations
 
-- Work item listing does not yet support server-side search or pagination.
+- Pagination currently uses page numbers and offsets rather    than cursor-based pagination.
 - Workflow rules are fixed rather than configurable.
 - Idempotency keys are not implemented.
 - Automated tests do not cover every API endpoint.
